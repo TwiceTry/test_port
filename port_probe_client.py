@@ -44,6 +44,31 @@ MAGIC_PREFIX = b"PROBE-"
 TCP_TIMEOUT = 3.0
 UDP_TIMEOUT = 3.0
 
+# 预设端口组 (针对家庭宽带/移动网络常见屏蔽场景)
+# 每个预设包含 tcp/udp 端口; 设计上端口数都控制在防风控上限内
+PRESETS = {
+    # 移动宽带典型被屏蔽/需验证的端口 (邮件/文件共享/常见服务)
+    "mobile": {
+        "tcp": [25, 80, 135, 139, 443, 445, 465, 995, 3389, 8080, 8443],
+        "udp": [53, 137, 138, 500, 4500, 10000, 10001],
+    },
+    # 常见自建服务端口 (一般应开放, 用于验证基础连通)
+    "common": {
+        "tcp": [22, 80, 443, 3389, 8080, 8443, 10000, 10001, 10002],
+        "udp": [53, 123, 500, 4500, 10000, 10001],
+    },
+    # 仅测高位自定义端口 (家庭 NAS/反代常用, 通常不被屏蔽)
+    "high": {
+        "tcp": [10000, 10001, 10002, 10003, 10004, 20000, 30000, 40000],
+        "udp": [10000, 10001, 10002, 10003, 10004],
+    },
+    # Windows 文件共享 / 远程类 (常被运营商封)
+    "windows": {
+        "tcp": [135, 137, 138, 139, 445, 3389, 5985, 5986],
+        "udp": [137, 138, 445],
+    },
+}
+
 
 def build_probe(token: str) -> bytes:
     return MAGIC_PREFIX + token.encode()
@@ -147,7 +172,22 @@ def main():
                     help="单次运行最大端口总数, 防止误用触发风控")
     ap.add_argument("--csv", default=None,
                     help="将结果导出为 CSV 文件路径, 如 ./result.csv")
+    ap.add_argument("--preset", default=None,
+                    choices=list(PRESETS.keys()),
+                    help="使用预设端口组 (mobile/common/high/windows), 配合 --tcp-ports/--udp-ports 追加")
     args = ap.parse_args()
+
+    # 预设端口组展开: --preset 提供默认端口, 显式 --ports/--tcp-ports/--udp-ports 可覆盖/追加
+    if args.preset:
+        preset = PRESETS[args.preset]
+        if not args.tcp_ports:
+            args.tcp_ports = ",".join(str(p) for p in preset["tcp"])
+        if not args.udp_ports:
+            args.udp_ports = ",".join(str(p) for p in preset["udp"])
+        if args.ports == "10000,10001,10002,10003,10004":  # 仅当用户未自定义 --ports
+            args.ports = ",".join(str(p) for p in set(preset["tcp"]) | set(preset["udp"]))
+        log(f"[预设] 已加载端口组 '{args.preset}': "
+            f"TCP={preset['tcp']}, UDP={preset['udp']}")
 
     if args.concurrency > 1:
         log("[警告] 并发>1 会增加突发流量, 不建议在运营商网络中提高。已按你设置运行。")
@@ -165,9 +205,14 @@ def main():
     random.shuffle(tasks)
 
     if len(tasks) > args.max_ports:
-        log(f"[错误] 端口总数 {len(tasks)} 超过安全上限 {args.max_ports}。"
-            f"请缩减端口或显式调高 --max-ports (不推荐)。")
-        return
+        if args.preset:
+            # 预设是精选集合, 自动放宽上限但保留速率/延迟防风控
+            log(f"[提示] 预设 '{args.preset}' 端口数 {len(tasks)} 超过默认上限 "
+                f"{args.max_ports}, 已自动放行 (仍受 --rate/延迟 限速保护)。")
+        else:
+            log(f"[错误] 端口总数 {len(tasks)} 超过安全上限 {args.max_ports}。"
+                f"请缩减端口或显式调高 --max-ports (不推荐)。")
+            return
 
     rate_interval = 1.0 / max(args.rate, 0.1)
     total_est = len(tasks) * (rate_interval + (args.min_delay + args.max_delay) / 2)
