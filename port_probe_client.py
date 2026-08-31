@@ -150,6 +150,42 @@ def worker(task_queue, results, args, rate_lock, rate_interval, stop_flag):
         time.sleep(random.uniform(args.min_delay, args.max_delay))
 
 
+def parse_ports(spec):
+    """解析端口规格, 支持:
+       - 单个:       80
+       - 逗号:       80,443,8080
+       - 范围:       21114-21119
+       - 混合:       22,80,21114-21119,30000
+    返回去重后的升序端口列表 (int)。"""
+    if not spec:
+        return []
+    out = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo_s, hi_s = part.split("-", 1)
+            try:
+                lo, hi = int(lo_s.strip()), int(hi_s.strip())
+            except ValueError:
+                raise ValueError(f"无效端口范围: {part}")
+            if lo > hi:
+                lo, hi = hi, lo
+            if lo < 1 or hi > 65535:
+                raise ValueError(f"端口超出范围(1-65535): {part}")
+            out.update(range(lo, hi + 1))
+        else:
+            try:
+                p = int(part)
+            except ValueError:
+                raise ValueError(f"无效端口: {part}")
+            if p < 1 or p > 65535:
+                raise ValueError(f"端口超出范围(1-65535): {p}")
+            out.add(p)
+    return sorted(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description="端口开放测试客户端 (温和版)")
     ap.add_argument("--host", required=True, help="目标公网 IP 或域名")
@@ -193,9 +229,13 @@ def main():
         log("[警告] 并发>1 会增加突发流量, 不建议在运营商网络中提高。已按你设置运行。")
 
     # 构造任务
+    try:
+        tcp_ports = parse_ports(args.tcp_ports or args.ports)
+        udp_ports = parse_ports(args.udp_ports or args.ports)
+    except ValueError as e:
+        log(f"[错误] 端口解析失败: {e}")
+        return
     tasks = []
-    tcp_ports = [int(p) for p in (args.tcp_ports or args.ports).split(",") if p.strip()]
-    udp_ports = [int(p) for p in (args.udp_ports or args.ports).split(",") if p.strip()]
     for p in tcp_ports:
         tasks.append(("tcp", p))
     for p in udp_ports:

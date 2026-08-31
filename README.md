@@ -85,6 +85,23 @@ python port_probe_client.py --host 120.213.179.31 --token SECRET2026 \
     --ports 10000,10001,10002,10003,10004,22,80,443,3389,8080
 ```
 
+端口支持**范围写法** (`--ports`/`--tcp-ports`/`--udp-ports` 通用):
+
+```bash
+# 范围: 展开为 21114,21115,21116,21117,21118,21119
+python port_probe_client.py --host 120.213.179.31 --token SECRET2026 --ports 21114-21119
+
+# 混合: 单个 + 逗号 + 范围
+python port_probe_client.py --host 120.213.179.31 --token SECRET2026 --ports 22,80,21114-21119,30000
+
+# TCP/UDP 分别指定范围
+python port_probe_client.py --host 120.213.179.31 --token SECRET2026 \
+    --tcp-ports 21114-21119 --udp-ports 21114-21119
+```
+
+范围会自动去重、纠正方向 (如 `21119-21114` 等价于 `21114-21119`), 超出 1-65535 会报错提示。
+注意: 范围展开后**端口总数仍计入 `--max-ports` 上限**, 不要写 `1-65535` 这类大段以触发风控。
+
 ### 3. IPv6 目标
 
 家庭主机若已有公网 IPv6, 客户端加 `--family ipv6`:
